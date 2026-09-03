@@ -1,0 +1,80 @@
+name: Deploy to REG.RU
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Validate PHP syntax
+        run: php -l send.php
+      - name: Check required site files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f index.html
+          test -f thank-you.html
+          test -d assets
+          test -d images
+
+  deploy:
+    name: Deploy production
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.REG_RU_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.REG_RU_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+      - name: Upload site
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.REG_RU_HOST }}
+          DEPLOY_PORT: ${{ secrets.REG_RU_SSH_PORT }}
+          DEPLOY_USER: ${{ secrets.REG_RU_USER }}
+          DEPLOY_PATH: ${{ secrets.REG_RU_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?REG_RU_HOST is not configured}"
+          : "${DEPLOY_PORT:?REG_RU_SSH_PORT is not configured}"
+          : "${DEPLOY_USER:?REG_RU_USER is not configured}"
+          : "${DEPLOY_PATH:?REG_RU_DEPLOY_PATH is not configured}"
+          rsync -rlptvz --delete-delay \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='*.key' \
+            --exclude='*.pem' \
+            --exclude='DEPLOYMENT.md' \
+            -e "ssh -i $HOME/.ssh/deploy_key -p $DEPLOY_PORT -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+      - name: Remove temporary SSH credentials
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"
