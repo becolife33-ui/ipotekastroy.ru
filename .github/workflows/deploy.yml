@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Validate PHP syntax
         run: php -l send.php
       - name: Check required site files
@@ -38,7 +38,7 @@ jobs:
     environment: production
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Configure SSH
         shell: bash
         env:
@@ -64,6 +64,17 @@ jobs:
           : "${DEPLOY_PORT:?REG_RU_SSH_PORT is not configured}"
           : "${DEPLOY_USER:?REG_RU_USER is not configured}"
           : "${DEPLOY_PATH:?REG_RU_DEPLOY_PATH is not configured}"
+          if ! ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" true; then
+            echo "::error::SSH connection failed. Check REG_RU_HOST, REG_RU_SSH_PORT, REG_RU_USER, REG_RU_SSH_PRIVATE_KEY, authorized_keys and REG_RU_SSH_KNOWN_HOSTS."
+            exit 1
+          fi
           rsync -rlptvz --delete-delay \
             --exclude='.git/' \
             --exclude='.github/' \
