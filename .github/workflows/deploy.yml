@@ -64,6 +64,7 @@ jobs:
           : "${DEPLOY_PORT:?REG_RU_SSH_PORT is not configured}"
           : "${DEPLOY_USER:?REG_RU_USER is not configured}"
           : "${DEPLOY_PATH:?REG_RU_DEPLOY_PATH is not configured}"
+          SSH_ERROR_FILE="$RUNNER_TEMP/ssh-error.log"
           if ! ssh \
             -i "$HOME/.ssh/deploy_key" \
             -p "$DEPLOY_PORT" \
@@ -71,10 +72,26 @@ jobs:
             -o ConnectTimeout=15 \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
-            "$DEPLOY_USER@$DEPLOY_HOST" true; then
-            echo "::error::SSH connection failed. Check REG_RU_HOST, REG_RU_SSH_PORT, REG_RU_USER, REG_RU_SSH_PRIVATE_KEY, authorized_keys and REG_RU_SSH_KNOWN_HOSTS."
+            "$DEPLOY_USER@$DEPLOY_HOST" true 2>"$SSH_ERROR_FILE"; then
+            if grep -Eqi 'permission denied|authentication failed' "$SSH_ERROR_FILE"; then
+              echo "::error::SSH authentication failed: check REG_RU_USER and ensure the public key is present in ~/.ssh/authorized_keys on REG.RU."
+            elif grep -Eqi 'error in libcrypto|invalid format|load key' "$SSH_ERROR_FILE"; then
+              echo "::error::The SSH private key has an invalid format. Save the complete unmodified private key in REG_RU_SSH_PRIVATE_KEY."
+            elif grep -Eqi 'host key verification failed|remote host identification has changed|no .* host key is known' "$SSH_ERROR_FILE"; then
+              echo "::error::SSH host verification failed: refresh REG_RU_SSH_KNOWN_HOSTS using a verified REG.RU host key."
+            elif grep -Eqi 'connection timed out|operation timed out' "$SSH_ERROR_FILE"; then
+              echo "::error::SSH connection timed out: check REG_RU_HOST, REG_RU_SSH_PORT and whether the REG.RU plan supports SSH."
+            elif grep -Eqi 'connection refused' "$SSH_ERROR_FILE"; then
+              echo "::error::SSH connection was refused: check REG_RU_SSH_PORT and whether SSH is enabled on the hosting plan."
+            elif grep -Eqi 'could not resolve hostname|name or service not known' "$SSH_ERROR_FILE"; then
+              echo "::error::REG_RU_HOST cannot be resolved. Check the host value without a protocol or path."
+            else
+              echo "::error::SSH connection failed for an unclassified reason. Check all REG.RU deployment secrets and server SSH access."
+            fi
+            rm -f "$SSH_ERROR_FILE"
             exit 1
           fi
+          rm -f "$SSH_ERROR_FILE"
           rsync -rlptvz --delete-delay \
             --exclude='.git/' \
             --exclude='.github/' \
