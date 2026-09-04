@@ -8,6 +8,7 @@
 *.pfx
 id_rsa*
 id_ed25519*
+reg_ru_deploy*
 
 # Editor and OS files
 .idea/
